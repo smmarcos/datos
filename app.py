@@ -380,9 +380,7 @@ def build_sidebar(df: pd.DataFrame) -> pd.DataFrame:
     if rating_sel != "Todos":
         filtered = filtered[filtered["rating"] == rating_sel]
     filtered = filtered[
-        filtered["catalog_year"].notna() &
-        (filtered["catalog_year"].astype(int) >= yr_range[0]) &
-        (filtered["catalog_year"].astype(int) <= yr_range[1])
+        filtered["catalog_year"].between(yr_range[0], yr_range[1], inclusive="both")
     ]
 
     return filtered
@@ -468,13 +466,19 @@ Este análisis explora <strong>8.807 títulos</strong> del catálogo, respondien
 
     if not df.empty:
         st.plotly_chart(plot_line_evolution(df), use_container_width=True)
-        peak_year = int(df.groupby(df["catalog_year"].astype(int)).size().idxmax())
-        peak_count = int(df.groupby(df["catalog_year"].astype(int)).size().max())
+        yearly_counts = (
+            df.dropna(subset=["catalog_year"])
+            .assign(catalog_year=lambda x: x["catalog_year"].astype(int))
+            .groupby("catalog_year")
+            .size()
+        )
+        peak_year = int(yearly_counts.idxmax()) if not yearly_counts.empty else None
+        peak_count = int(yearly_counts.max()) if not yearly_counts.empty else 0
         st.markdown(f"""
 <div class="insight-box">
 💡 <strong>Lectura del gráfico:</strong> El catálogo de Netflix experimentó un crecimiento explosivo a partir de 2015,
 coincidiendo con la expansión global de la plataforma. El año con más títulos lanzados en la selección actual es
-<strong>{peak_year}</strong> con <strong>{peak_count:,} títulos</strong>.
+<strong>{peak_year if peak_year is not None else 'N/D'}</strong> con <strong>{peak_count:,} títulos</strong>.
 El descenso en los últimos años puede deberse a que el dataset no recoge los lanzamientos más recientes de forma completa.
 </div>
 """, unsafe_allow_html=True)
