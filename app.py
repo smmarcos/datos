@@ -121,6 +121,14 @@ def load_data(path: str) -> pd.DataFrame:
     if "date_added" in df.columns:
         df["date_added"] = pd.to_datetime(df["date_added"], errors="coerce")
 
+    # Año de incorporación al catálogo (mejor para analizar crecimiento de Netflix)
+    if "year_added" in df.columns:
+        df["catalog_year"] = pd.to_numeric(df["year_added"], errors="coerce")
+    else:
+        df["catalog_year"] = pd.NA
+    if "date_added" in df.columns:
+        df["catalog_year"] = df["catalog_year"].fillna(df["date_added"].dt.year)
+
     # Limpiar ratings que contienen duraciones incorrectas
     valid_ratings = [
         "G", "PG", "PG-13", "R", "NC-17", "NR", "UR",
@@ -170,16 +178,18 @@ def get_all_countries(df: pd.DataFrame) -> list[str]:
 # FUNCIONES DE GRÁFICOS
 # ─────────────────────────────────────────────
 def plot_line_evolution(df: pd.DataFrame) -> px.line:
-    """Gráfico de líneas: títulos por año de lanzamiento."""
-    yearly = df.groupby("release_year").size().reset_index(name="titles")
+    """Gráfico de líneas: títulos por año de incorporación al catálogo."""
+    plot_df = df.dropna(subset=["catalog_year"]).copy()
+    plot_df["catalog_year"] = plot_df["catalog_year"].astype(int)
+    yearly = plot_df.groupby("catalog_year").size().reset_index(name="titles")
     fig = px.line(
         yearly,
-        x="release_year",
+        x="catalog_year",
         y="titles",
         markers=True,
         template="plotly_dark",
         color_discrete_sequence=[COLOR_RED],
-        labels={"release_year": "Año de lanzamiento", "titles": "Número de títulos"},
+        labels={"catalog_year": "Año de incorporación al catálogo", "titles": "Número de títulos"},
     )
     fig.update_traces(line_width=2.5, marker_size=5)
     fig.update_layout(
@@ -344,14 +354,15 @@ def build_sidebar(df: pd.DataFrame) -> pd.DataFrame:
     ratings_disponibles = ["Todos"] + sorted(df["rating"].unique().tolist())
     rating_sel = st.sidebar.selectbox("🔞 Clasificación por edades", ratings_disponibles)
 
-    # Rango de años
-    yr_min = int(df["release_year"].min())
-    yr_max = int(df["release_year"].max())
+    # Rango de años (incorporación al catálogo)
+    years_available = df["catalog_year"].dropna().astype(int)
+    yr_min = int(years_available.min())
+    yr_max = int(years_available.max())
     yr_range = st.sidebar.slider(
-        "📅 Rango de años de lanzamiento",
+        "📅 Rango de años de incorporación",
         min_value=yr_min,
         max_value=yr_max,
-        value=(2000, yr_max),
+        value=(max(yr_min, 2015), yr_max),
     )
 
     st.sidebar.markdown("---")
@@ -369,8 +380,9 @@ def build_sidebar(df: pd.DataFrame) -> pd.DataFrame:
     if rating_sel != "Todos":
         filtered = filtered[filtered["rating"] == rating_sel]
     filtered = filtered[
-        (filtered["release_year"] >= yr_range[0]) &
-        (filtered["release_year"] <= yr_range[1])
+        filtered["catalog_year"].notna() &
+        (filtered["catalog_year"].astype(int) >= yr_range[0]) &
+        (filtered["catalog_year"].astype(int) <= yr_range[1])
     ]
 
     return filtered
@@ -452,12 +464,12 @@ Este análisis explora <strong>8.807 títulos</strong> del catálogo, respondien
 
     # ── SECCIÓN 5: EVOLUCIÓN TEMPORAL ───────────
     st.markdown('<div class="section-title">📈 ¿Cómo ha evolucionado el catálogo de Netflix?</div>', unsafe_allow_html=True)
-    st.markdown('<div class="section-sub">Número de títulos por año de lanzamiento</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-sub">Número de títulos añadidos por año al catálogo de Netflix</div>', unsafe_allow_html=True)
 
     if not df.empty:
         st.plotly_chart(plot_line_evolution(df), use_container_width=True)
-        peak_year = int(df.groupby("release_year").size().idxmax())
-        peak_count = int(df.groupby("release_year").size().max())
+        peak_year = int(df.groupby(df["catalog_year"].astype(int)).size().idxmax())
+        peak_count = int(df.groupby(df["catalog_year"].astype(int)).size().max())
         st.markdown(f"""
 <div class="insight-box">
 💡 <strong>Lectura del gráfico:</strong> El catálogo de Netflix experimentó un crecimiento explosivo a partir de 2015,
@@ -573,7 +585,7 @@ documentales y comedias, géneros que atraen audiencias globales diversas y con 
     st.markdown('<div class="section-title">🔍 Explorador de títulos</div>', unsafe_allow_html=True)
     st.markdown('<div class="section-sub">Navega por el catálogo filtrado. Puedes ordenar haciendo clic en las columnas.</div>', unsafe_allow_html=True)
 
-    display_cols = ["title", "type", "country_primary", "release_year",
+    display_cols = ["title", "type", "country_primary", "catalog_year", "release_year",
                     "rating", "duration", "listed_in", "description"]
     cols_present = [c for c in display_cols if c in df.columns]
 
@@ -582,6 +594,8 @@ documentales y comedias, géneros que atraen audiencias globales diversas y con 
     df_display.columns = [
         c.replace("country_primary", "country") for c in cols_present
     ]
+    if "catalog_year" in df_display.columns:
+        df_display = df_display.rename(columns={"catalog_year": "year_added_to_netflix"})
 
     if search_term:
         mask = (
@@ -606,8 +620,8 @@ documentales y comedias, géneros que atraen audiencias globales diversas y con 
     if not df.empty:
         # ── Cálculos comparativos filtrado vs total ──
         pct_of_total   = round(total / total_raw * 100, 1)
-        avg_year_sel   = round(df["release_year"].mean(), 1)
-        avg_year_raw   = round(df_raw["release_year"].mean(), 1)
+        avg_year_sel   = round(df["catalog_year"].mean(), 1)
+        avg_year_raw   = round(df_raw["catalog_year"].mean(), 1)
         diff_avg_year  = round(avg_year_sel - avg_year_raw, 1)
 
         intl_sel = df[df["country_primary"].notna() & (df["country_primary"] != "Unknown") & (df["country_primary"] != "United States")]
@@ -620,7 +634,7 @@ documentales y comedias, géneros que atraen audiencias globales diversas y con 
         pct_movies_raw = round(movies_raw / total_raw * 100, 1) if total_raw > 0 else 0
         diff_movies    = round(pct_movies_sel - pct_movies_raw, 1)
 
-        year_span = int(df["release_year"].max()) - int(df["release_year"].min())
+        year_span = int(df["catalog_year"].max()) - int(df["catalog_year"].min())
 
         top_genre_sel = (
             df["listed_in"].dropna()
@@ -658,7 +672,7 @@ documentales y comedias, géneros que atraen audiencias globales diversas y con 
       <td style="text-align:right; padding:8px 6px; color:#aaa;">{pct_of_total}% del total</td>
     </tr>
     <tr style="border-bottom:1px solid #222;">
-      <td style="padding:8px 6px;">📅 Año medio de lanzamiento</td>
+    <td style="padding:8px 6px;">📅 Año medio de incorporación</td>
       <td style="text-align:right; padding:8px 6px;"><strong>{avg_year_sel}</strong></td>
       <td style="text-align:right; padding:8px 6px;">{avg_year_raw}</td>
       <td style="text-align:right; padding:8px 6px; color:{color(diff_avg_year)};">{arrow(diff_avg_year)} {abs(diff_avg_year)} años</td>
@@ -678,7 +692,7 @@ documentales y comedias, géneros que atraen audiencias globales diversas y con 
     <tr style="border-bottom:1px solid #222;">
       <td style="padding:8px 6px;">📆 Rango de años cubiertos</td>
       <td style="text-align:right; padding:8px 6px;"><strong>{year_span} años</strong></td>
-      <td style="text-align:right; padding:8px 6px;">{int(df_raw['release_year'].max()) - int(df_raw['release_year'].min())} años</td>
+    <td style="text-align:right; padding:8px 6px;">{int(df_raw['catalog_year'].max()) - int(df_raw['catalog_year'].min())} años</td>
       <td style="text-align:right; padding:8px 6px; color:#aaa;">—</td>
     </tr>
     <tr>
